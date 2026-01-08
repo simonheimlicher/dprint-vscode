@@ -9,14 +9,9 @@ import { delay, getUserConfigDirectory, waitWorkspaceInitialized } from "./utils
 export async function discoverWorkspaceConfigFiles(opts: { maxResults?: number; logger: Logger }) {
   const logger = opts.logger;
 
-  logger.logInfo("🔍 Config discovery started...");
-
   // Check if there's a custom config path specified
   const folders = vscode.workspace.workspaceFolders ?? [];
   const config = getCombinedDprintConfig(folders);
-
-  logger.logInfo(`Workspace folders: ${folders.length}`);
-  logger.logInfo(`Custom config path: ${config.configPath || "none"}`);
 
   if (config.configPath) {
     logger.logDebug(`Using custom config path: ${config.configPath}`);

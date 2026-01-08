@@ -78,7 +78,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   reInitializeBackend().then(success => {
     if (success) {
-      logger.logInfo("🎉 Extension active! (NEW CODE LOADED - v2)");
+      logger.logInfo("Extension active!");
     } else {
       logger.logWarn("Extension failed to start.");
     }

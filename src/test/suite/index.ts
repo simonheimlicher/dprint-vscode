@@ -7,6 +7,8 @@ export function run(): Promise<void> {
   const mocha = new Mocha({
     ui: "tdd",
     color: true,
+    reporter: "spec",
+    timeout: 10000,
   });
 
   const testsRoot = path.resolve(__dirname, "..");
@@ -24,13 +26,15 @@ export function run(): Promise<void> {
         // Run the mocha test
         mocha.run(failures => {
           if (failures > 0) {
+            console.error(`\n\n❌ ${failures} test(s) failed\n`);
             e(new Error(`${failures} tests failed.`));
           } else {
+            console.log("\n✅ All tests passed!\n");
             c();
           }
         });
       } catch (err) {
-        console.error(err);
+        console.error("Test runner error:", err);
         e(err);
       }
     });

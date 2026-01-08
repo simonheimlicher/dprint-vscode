@@ -11,7 +11,7 @@ suite("Extension Test Suite", () => {
   vscode.window.showInformationMessage("Start all tests.");
   // create a temp folder
   let tempNumber = 0;
-  let tempFolder = path.join(process.cwd(), "temp");
+  let tempFolder = path.join(os.tmpdir(), "dprint-vscode-test", "temp");
 
   const context = {
     get tempFolderUri() {
@@ -25,7 +25,7 @@ suite("Extension Test Suite", () => {
       fs.mkdirSync(tempFolder, { recursive: true });
     },
     async withTempFolder(action: () => Promise<void>) {
-      tempFolder = path.join(process.cwd(), `temp${++tempNumber}`);
+      tempFolder = path.join(os.tmpdir(), "dprint-vscode-test", `temp${++tempNumber}`);
       fs.rmSync(tempFolder, { recursive: true, force: true });
       fs.mkdirSync(tempFolder, { recursive: true });
       await action();

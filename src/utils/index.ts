@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import * as vscode from "vscode";
 export * from "./ActivatedDisposables.js";
 export * from "./TextDownloader.js";
@@ -11,6 +13,31 @@ export function shellExpand(path: string, env: { [prop: string]: string | undefi
     path = path.replace("~/", home + "/");
   }
   return path;
+}
+
+/**
+ * Gets platform-specific user-level config directory for dprint.
+ * - Linux/macOS: ~/.config/dprint
+ * - Windows: %APPDATA%\dprint
+ */
+export function getUserConfigDirectory(): string {
+  const home = homedir();
+  if (process.platform === "win32") {
+    // On Windows, use APPDATA
+    const appData = process.env.APPDATA;
+    if (appData) {
+      return join(appData, "dprint");
+    }
+    // Fallback to home directory
+    return join(home, "AppData", "Roaming", "dprint");
+  } else {
+    // Linux/macOS use XDG_CONFIG_HOME or ~/.config
+    const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+    if (xdgConfigHome) {
+      return join(xdgConfigHome, "dprint");
+    }
+    return join(home, ".config", "dprint");
+  }
 }
 
 export async function waitWorkspaceInitialized() {

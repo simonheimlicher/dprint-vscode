@@ -7,7 +7,10 @@ export * from "./TextDownloader.js";
 export class ObjectDisposedError extends Error {}
 
 /** For now, only expands ~/ to env.HOME */
-export function shellExpand(path: string, env: { [prop: string]: string | undefined } = process.env) {
+export function shellExpand(
+  path: string,
+  env: { [prop: string]: string | undefined } = process.env
+) {
   if (path.startsWith("~/")) {
     const home = env.HOME ?? "";
     path = path.replace("~/", home + "/");
@@ -19,12 +22,21 @@ export function shellExpand(path: string, env: { [prop: string]: string | undefi
  * Gets platform-specific user-level config directory for dprint.
  * - Linux/macOS: ~/.config/dprint
  * - Windows: %APPDATA%\dprint
+ *
+ * @param options Optional parameters for testing (allows dependency injection)
  */
-export function getUserConfigDirectory(): string {
-  const home = homedir();
-  if (process.platform === "win32") {
+export function getUserConfigDirectory(options?: {
+  homedir?: string;
+  platform?: NodeJS.Platform;
+  env?: { APPDATA?: string; XDG_CONFIG_HOME?: string };
+}): string {
+  const home = options?.homedir ?? homedir();
+  const platform = options?.platform ?? process.platform;
+  const env = options?.env ?? process.env;
+
+  if (platform === "win32") {
     // On Windows, use APPDATA
-    const appData = process.env.APPDATA;
+    const appData = env.APPDATA;
     if (appData) {
       return join(appData, "dprint");
     }
@@ -32,7 +44,7 @@ export function getUserConfigDirectory(): string {
     return join(home, "AppData", "Roaming", "dprint");
   } else {
     // Linux/macOS use XDG_CONFIG_HOME or ~/.config
-    const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+    const xdgConfigHome = env.XDG_CONFIG_HOME;
     if (xdgConfigHome) {
       return join(xdgConfigHome, "dprint");
     }
@@ -41,11 +53,14 @@ export function getUserConfigDirectory(): string {
 }
 
 export async function waitWorkspaceInitialized() {
-  while (vscode.workspace.workspaceFolders == null || vscode.workspace.workspaceFolders.length === 0) {
+  while (
+    vscode.workspace.workspaceFolders == null ||
+    vscode.workspace.workspaceFolders.length === 0
+  ) {
     await delay(100);
   }
 }
 
 export function delay(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

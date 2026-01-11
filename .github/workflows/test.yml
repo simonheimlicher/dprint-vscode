@@ -4,7 +4,6 @@ on:
   push:
     branches: [main, add_ci_tests]
   pull_request:
-    branches: [main]
 
 jobs:
   test:

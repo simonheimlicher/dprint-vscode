@@ -9,9 +9,11 @@ import * as vscode from "vscode";
 
 suite("Extension Test Suite", () => {
   vscode.window.showInformationMessage("Start all tests.");
-  // create a temp folder
+  // Use the workspace folder that's already open
   let tempNumber = 0;
-  let tempFolder = path.join(os.tmpdir(), "dprint-vscode-test", "temp");
+  let tempFolder =
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ||
+    path.join(os.tmpdir(), "dprint-vscode-test", "temp");
 
   const context = {
     get tempFolderUri() {
@@ -25,11 +27,11 @@ suite("Extension Test Suite", () => {
       fs.mkdirSync(tempFolder, { recursive: true });
     },
     async withTempFolder(action: () => Promise<void>) {
-      tempFolder = path.join(
-        os.tmpdir(),
-        "dprint-vscode-test",
-        `temp${++tempNumber}`
-      );
+      // Create a subfolder in the workspace for this test
+      const workspaceRoot =
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ||
+        path.join(os.tmpdir(), "dprint-vscode-test");
+      tempFolder = path.join(workspaceRoot, `temp${++tempNumber}`);
       fs.rmSync(tempFolder, { recursive: true, force: true });
       fs.mkdirSync(tempFolder, { recursive: true });
       await action();
@@ -48,10 +50,8 @@ suite("Extension Test Suite", () => {
       );
     },
     async openWorkspace() {
-      await vscode.commands.executeCommand(
-        "vscode.openFolder",
-        this.tempFolderUri
-      );
+      // Workspace is already open from runTest.ts
+      // Just configure the settings
       await vscode.workspace.getConfiguration("files").update("eol", "\n");
       await vscode.workspace
         .getConfiguration("editor")

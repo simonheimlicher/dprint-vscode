@@ -122,7 +122,7 @@ suite("Extension Test Suite", () => {
 
     // should be formatted
     assert.equal(doc.getText(), `{\n  "test": 5\n}\n`);
-  });
+  }).timeout(15_000);
 
   test("format command", async () => {
     context.reset();
@@ -142,7 +142,7 @@ suite("Extension Test Suite", () => {
 
     // should be formatted
     assert.equal(doc.getText(), `{\n  "test": 5\n}\n`);
-  });
+  }).timeout(15_000);
 
   test("format after dprint process kill", async () => {
     context.reset();

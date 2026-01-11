@@ -39,7 +39,14 @@ jobs:
         run: |
           choco install dprint -y
 
-      - name: Run tests
+      - name: Run tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm test
+        env:
+          CI: true
+
+      - name: Run tests (non-Linux)
+        if: runner.os != 'Linux'
         run: npm test
         env:
           CI: true

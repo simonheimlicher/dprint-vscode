@@ -7,11 +7,18 @@ import * as process from "node:process";
 import * as vscode from "vscode";
 // import * as myExtension from '../../extension';
 
-suite("Extension Test Suite", () => {
+suite("Extension Test Suite", function () {
+  // Use longer timeouts in CI where plugin downloads and cold starts are slower
+  const isCI = process.env.CI != null;
+  this.timeout(isCI ? 30_000 : 5_000);
+
   vscode.window.showInformationMessage("Start all tests.");
-  // create a temp folder
+  // Create test files in a subdirectory within the opened workspace
+  // Don't use the workspace root directly to avoid deletion issues
   let tempNumber = 0;
-  let tempFolder = path.join(process.cwd(), "temp");
+  const workspaceRoot =
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  let tempFolder = path.join(workspaceRoot, "test");
 
   const context = {
     get tempFolderUri() {
@@ -25,14 +32,15 @@ suite("Extension Test Suite", () => {
       fs.mkdirSync(tempFolder, { recursive: true });
     },
     async withTempFolder(action: () => Promise<void>) {
-      tempFolder = path.join(process.cwd(), `temp${++tempNumber}`);
+      tempFolder = path.join(workspaceRoot, `test${++tempNumber}`);
       fs.rmSync(tempFolder, { recursive: true, force: true });
       fs.mkdirSync(tempFolder, { recursive: true });
       await action();
     },
     createDprintJson() {
-      this.createFile(
-        "dprint.json",
+      // Create dprint.json in workspace root, not in test subdirectory
+      fs.writeFileSync(
+        path.join(workspaceRoot, "dprint.json"),
         `{
         "includes": [
           "**/*.json"
@@ -41,25 +49,32 @@ suite("Extension Test Suite", () => {
           "https://plugins.dprint.dev/json-0.15.3.wasm"
         ]
       }`,
+        "utf8"
       );
     },
     async openWorkspace() {
-      await vscode.commands.executeCommand("vscode.openFolder", this.tempFolderUri);
+      // Workspace is already open from runTest.ts
+      // Just configure the settings
       await vscode.workspace.getConfiguration("files").update("eol", "\n");
-      await vscode.workspace.getConfiguration("editor").update("defaultFormatter", "dprint.dprint");
+      await vscode.workspace
+        .getConfiguration("editor")
+        .update("defaultFormatter", "dprint.dprint");
     },
     async configureFormatOnSave() {
-      await vscode.workspace.getConfiguration("editor").update("formatOnSave", true);
+      await vscode.workspace
+        .getConfiguration("editor")
+        .update("formatOnSave", true);
     },
     getUri(name: string) {
       return vscode.Uri.joinPath(this.tempFolderUri, name);
     },
     waitInitialize() {
-      // would be nice to do something better
-      return this.sleep(250);
+      // Wait for extension to discover config, download plugins, and start dprint
+      // Longer wait in CI where cold starts and downloads are slower
+      return this.sleep(isCI ? 2000 : 500);
     },
     async sleep(ms: number) {
-      await new Promise(resolve => setTimeout(resolve, ms));
+      await new Promise((resolve) => setTimeout(resolve, ms));
     },
     async openAndShowDocument(name: string) {
       const doc = await vscode.workspace.openTextDocument(this.getUri(name));
@@ -69,20 +84,18 @@ suite("Extension Test Suite", () => {
     async formatCommand(name: string | vscode.Uri) {
       await vscode.commands.executeCommand(
         "editor.action.formatDocument",
-        name instanceof vscode.Uri ? name : this.getUri(name),
+        name instanceof vscode.Uri ? name : this.getUri(name)
       );
     },
     killAllDprintProcesses() {
-      return new Promise<void>((resolve, reject) => {
-        const command = os.platform() === "win32"
-          ? "taskkill /im dprint.exe /f"
-          : "pkill dprint";
-        cp.exec(command, (err) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
+      return new Promise<void>((resolve) => {
+        const command =
+          os.platform() === "win32"
+            ? "taskkill /im dprint.exe /f"
+            : "pkill dprint";
+        cp.exec(command, () => {
+          // Always resolve - if no processes exist, that's fine
+          resolve();
         });
       });
     },
@@ -98,12 +111,14 @@ suite("Extension Test Suite", () => {
 
     // create a json file and open it
     const doc = await context.openAndShowDocument("test.json");
-    await applyTextChanges(doc, [{
-      newText: `{
+    await applyTextChanges(doc, [
+      {
+        newText: `{
              "test":     5
       }`,
-      range: getRange([0, 0], [0, 0]),
-    }]);
+        range: getRange([0, 0], [0, 0]),
+      },
+    ]);
     await doc.save();
 
     // should be formatted
@@ -117,7 +132,7 @@ suite("Extension Test Suite", () => {
       "test.json",
       `{
           "test":               5
-    }`,
+    }`
     );
     await context.openWorkspace();
     await context.waitInitialize();
@@ -139,12 +154,14 @@ suite("Extension Test Suite", () => {
 
     // create a json file and open it
     const doc = await context.openAndShowDocument("test.json");
-    await applyTextChanges(doc, [{
-      range: getRange([0, 0], [0, 0]),
-      newText: `{
+    await applyTextChanges(doc, [
+      {
+        range: getRange([0, 0], [0, 0]),
+        newText: `{
               "   test":     5
         }`,
-    }]);
+      },
+    ]);
     await context.formatCommand(doc.uri);
 
     await context.killAllDprintProcesses();
@@ -163,15 +180,21 @@ suite("Extension Test Suite", () => {
 
     // should be formatted
     assert.equal(doc.getText(), `{\n  "test": 5\n}\n`);
-  }).timeout(4_000);
+  });
 
-  async function applyTextChanges(doc: vscode.TextDocument, edits: vscode.TextEdit[]) {
+  async function applyTextChanges(
+    doc: vscode.TextDocument,
+    edits: vscode.TextEdit[]
+  ) {
     const edit = new vscode.WorkspaceEdit();
     edit.set(doc.uri, edits);
     await vscode.workspace.applyEdit(edit);
   }
 
   function getRange(from: [number, number], to: [number, number]) {
-    return new vscode.Range(new vscode.Position(from[0], from[1]), new vscode.Position(to[0], to[1]));
+    return new vscode.Range(
+      new vscode.Position(from[0], from[1]),
+      new vscode.Position(to[0], to[1])
+    );
   }
 });

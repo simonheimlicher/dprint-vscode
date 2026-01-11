@@ -170,6 +170,25 @@ The extension supports two operational modes, determined by the `dprint.experime
 - Uses `@vscode/test-electron` for running extension tests
 - `runTest.ts` downloads VSCode and runs test suite
 
+**User-Level Config Tests:**
+
+- Unit tests in [src/test/suite/utils.test.ts](src/test/suite/utils.test.ts)
+  - Platform-specific path resolution (Windows/Linux/macOS)
+  - Environment variable handling (APPDATA, XDG_CONFIG_HOME)
+  - 8 tests covering all platform scenarios
+- Integration tests in [src/test/suite/extension.test.ts](src/test/suite/extension.test.ts)
+  - User-level config discovery and formatting
+  - Config priority testing (custom > workspace > user-level)
+  - Multiple config filename variants (dprint.json, dprint.jsonc)
+  - 6 tests covering core user-level config scenarios
+
+**CI/CD:**
+
+- GitHub Actions workflow [.github/workflows/test.yml](.github/workflows/test.yml)
+- Runs on Ubuntu, Windows, and macOS
+- Installs dprint automatically on all platforms
+- Tests run on every push and pull request
+
 ## TypeScript Configuration
 
 - Target: ES6
@@ -228,3 +247,10 @@ The extension supports two operational modes, determined by the `dprint.experime
 - `dprint.configPath` setting supports `~/` expansion
 - Relative paths (`./`, `../`) resolved relative to workspace folder
 - npm executable preferred over system PATH for reproducibility
+
+
+## Always use `AskUserQuestion` Tool
+
+**Always use the `AskUserQuestion` tool to obtain guidance from the user, such as: discover context, obtain rationale, as well as to support the user in makking the right call by asking critical questions before blindly following the user's requests**
+
+**NEVER ask the user any questions without using the `AskUserQuestion` tool**

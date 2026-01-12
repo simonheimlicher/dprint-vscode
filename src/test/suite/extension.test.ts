@@ -1,11 +1,8 @@
 import * as assert from "node:assert";
-import * as cp from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import * as process from "node:process";
 import * as vscode from "vscode";
-// import * as myExtension from '../../extension';
 
 suite("Extension Test Suite", function () {
   // Use longer timeouts in CI where plugin downloads and cold starts are slower
@@ -87,17 +84,18 @@ suite("Extension Test Suite", function () {
         name instanceof vscode.Uri ? name : this.getUri(name)
       );
     },
-    killAllDprintProcesses() {
-      return new Promise<void>((resolve) => {
-        const command =
-          os.platform() === "win32"
-            ? "taskkill /im dprint.exe /f"
-            : "pkill dprint";
-        cp.exec(command, () => {
-          // Always resolve - if no processes exist, that's fine
-          resolve();
-        });
-      });
+    async killAllDprintProcesses() {
+      // Use extension API to get the PID of dprint process spawned by this test
+      const extension = vscode.extensions.getExtension("dprint.dprint");
+      const pid = extension?.exports?.getEditorServicePid?.();
+
+      if (pid != null) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch (err) {
+          // Process already dead or no permissions - that's fine
+        }
+      }
     },
   };
 
@@ -180,6 +178,57 @@ suite("Extension Test Suite", function () {
 
     // should be formatted
     assert.equal(doc.getText(), `{\n  "test": 5\n}\n`);
+  });
+
+  test("process isolation - verify PID-based killing", async () => {
+    context.reset();
+    context.createDprintJson();
+    await context.openWorkspace();
+    await context.waitInitialize();
+
+    // Get the PID of the dprint process spawned by this test
+    const extension = vscode.extensions.getExtension("dprint.dprint");
+    const pidBeforeKill = extension?.exports?.getEditorServicePid?.();
+
+    assert.ok(pidBeforeKill, "Should have a dprint process running after initialization");
+    assert.strictEqual(typeof pidBeforeKill, "number", "PID should be a number");
+
+    // Verify process exists using signal 0 (check existence without killing)
+    let processExists = true;
+    try {
+      process.kill(pidBeforeKill, 0);
+    } catch {
+      processExists = false;
+    }
+    assert.ok(processExists, "Process should exist before kill");
+
+    // Kill the process using our API
+    await context.killAllDprintProcesses();
+
+    // Wait a bit for the process to actually terminate
+    await context.sleep(100);
+
+    // Verify the process is actually dead
+    let processGone = false;
+    try {
+      process.kill(pidBeforeKill, 0);
+    } catch {
+      processGone = true;
+    }
+    assert.ok(processGone, "Process should be terminated after killAllDprintProcesses()");
+
+    // Verify the extension can restart the process and format successfully
+    context.createFile("test.json", `{"test": 5}`);
+    const doc = await context.openAndShowDocument("test.json");
+    await context.formatCommand(doc.uri);
+
+    // If formatting succeeds, the extension successfully restarted dprint
+    assert.equal(doc.getText(), `{\n  "test": 5\n}\n`, "Extension should restart dprint and format successfully");
+
+    // Verify we have a new PID (not the old one)
+    const pidAfterRestart = extension?.exports?.getEditorServicePid?.();
+    assert.ok(pidAfterRestart, "Should have a new dprint process after restart");
+    assert.notStrictEqual(pidAfterRestart, pidBeforeKill, "New process should have different PID");
   });
 
   async function applyTextChanges(

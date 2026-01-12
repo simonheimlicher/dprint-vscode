@@ -84,6 +84,11 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
 
+  // Export API for testing
+  return {
+    getEditorServicePid: () => backend.getEditorServicePid(),
+  };
+
   async function reInitializeBackend() {
     try {
       await backend.reInitialize();

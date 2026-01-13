@@ -2,7 +2,7 @@ name: Test
 
 on:
   push:
-    branches: [main, add_ci_tests]
+    branches: [main]
   pull_request:
 
 jobs:

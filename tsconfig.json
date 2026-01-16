@@ -18,6 +18,8 @@
   },
   "exclude": [
     "node_modules",
+    "out",
+    "test-workspace",
     ".vscode-test"
   ]
 }

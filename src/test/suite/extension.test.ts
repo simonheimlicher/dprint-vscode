@@ -5,13 +5,22 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as process from "node:process";
 import * as vscode from "vscode";
-// import * as myExtension from '../../extension';
 
 suite("Extension Test Suite", () => {
   vscode.window.showInformationMessage("Start all tests.");
-  // create a temp folder
   let tempNumber = 0;
-  let tempFolder = path.join(process.cwd(), "temp");
+
+  // Tests require a workspace folder to be open (via runTest.ts or launch.json)
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) {
+    throw new Error("Tests require a workspace folder to be open");
+  }
+
+  // Create test files in a subdirectory within the opened workspace
+  // Don't use the workspace root directly to avoid deletion issues
+  let tempFolder = path.join(workspaceRoot, "test");
+  fs.mkdirSync(tempFolder, { recursive: true });
+
 
   const context = {
     get tempFolderUri() {
@@ -20,18 +29,21 @@ suite("Extension Test Suite", () => {
     createFile(name: string, text: string) {
       fs.writeFileSync(path.join(tempFolder, name), text, "utf8");
     },
+    createWorkspaceFile(name: string, text: string) {
+      fs.writeFileSync(path.join(workspaceRoot, name), text, "utf8");
+    },
     reset() {
       fs.rmSync(tempFolder, { recursive: true, force: true });
       fs.mkdirSync(tempFolder, { recursive: true });
     },
     async withTempFolder(action: () => Promise<void>) {
-      tempFolder = path.join(process.cwd(), `temp${++tempNumber}`);
+      tempFolder = path.join(workspaceRoot, `temp${++tempNumber}`);
       fs.rmSync(tempFolder, { recursive: true, force: true });
       fs.mkdirSync(tempFolder, { recursive: true });
       await action();
     },
     createDprintJson() {
-      this.createFile(
+      this.createWorkspaceFile(
         "dprint.json",
         `{
         "includes": [
@@ -43,10 +55,14 @@ suite("Extension Test Suite", () => {
       }`,
       );
     },
-    async openWorkspace() {
-      await vscode.commands.executeCommand("vscode.openFolder", this.tempFolderUri);
+    async configureWorkspace() {
+      // Workspace is already open via launchArgs (runTest.ts) or launch.json
       await vscode.workspace.getConfiguration("files").update("eol", "\n");
       await vscode.workspace.getConfiguration("editor").update("defaultFormatter", "dprint.dprint");
+      // Disable local history to prevent race conditions during test cleanup.
+      // VSCode's local history asynchronously copies files when they're saved,
+      // which can fail with ENOENT if test cleanup deletes the file first.
+      await vscode.workspace.getConfiguration("workbench").update("localHistory.enabled", false);
     },
     async configureFormatOnSave() {
       await vscode.workspace.getConfiguration("editor").update("formatOnSave", true);
@@ -55,8 +71,8 @@ suite("Extension Test Suite", () => {
       return vscode.Uri.joinPath(this.tempFolderUri, name);
     },
     waitInitialize() {
-      // would be nice to do something better
-      return this.sleep(250);
+      // Wait for extension to discover config, download plugins, and start dprint
+      return this.sleep(500);
     },
     async sleep(ms: number) {
       await new Promise(resolve => setTimeout(resolve, ms));
@@ -92,7 +108,7 @@ suite("Extension Test Suite", () => {
     context.reset();
     context.createDprintJson();
     context.createFile("test.json", "");
-    await context.openWorkspace();
+    await context.configureWorkspace();
     await context.configureFormatOnSave();
     await context.waitInitialize();
 
@@ -119,7 +135,7 @@ suite("Extension Test Suite", () => {
           "test":               5
     }`,
     );
-    await context.openWorkspace();
+    await context.configureWorkspace();
     await context.waitInitialize();
 
     // open the test.json and format it with the format command
@@ -134,7 +150,7 @@ suite("Extension Test Suite", () => {
     context.reset();
     context.createDprintJson();
     context.createFile("test.json", "");
-    await context.openWorkspace();
+    await context.configureWorkspace();
     await context.waitInitialize();
 
     // create a json file and open it

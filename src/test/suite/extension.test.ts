@@ -1,7 +1,5 @@
 import * as assert from "node:assert";
-import * as cp from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import * as process from "node:process";
 import * as vscode from "vscode";
@@ -20,7 +18,6 @@ suite("Extension Test Suite", () => {
   // Don't use the workspace root directly to avoid deletion issues
   let tempFolder = path.join(workspaceRoot, "test");
   fs.mkdirSync(tempFolder, { recursive: true });
-
 
   const context = {
     get tempFolderUri() {
@@ -89,18 +86,17 @@ suite("Extension Test Suite", () => {
       );
     },
     killAllDprintProcesses() {
-      return new Promise<void>((resolve, reject) => {
-        const command = os.platform() === "win32"
-          ? "taskkill /im dprint.exe /f"
-          : "pkill dprint";
-        cp.exec(command, (err) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
-        });
-      });
+      // Use extension API to get the PID of dprint process spawned by this test
+      const extension = vscode.extensions.getExtension("dprint.dprint");
+      const pid = extension?.exports?.getEditorServicePid?.();
+
+      if (pid != null) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // Process already dead or no permissions - that's fine
+        }
+      }
     },
   };
 
@@ -163,7 +159,7 @@ suite("Extension Test Suite", () => {
     }]);
     await context.formatCommand(doc.uri);
 
-    await context.killAllDprintProcesses();
+    context.killAllDprintProcesses();
 
     // now try editing and saving again
     await applyTextChanges(doc, [
@@ -180,6 +176,61 @@ suite("Extension Test Suite", () => {
     // should be formatted
     assert.equal(doc.getText(), `{\n  "test": 5\n}\n`);
   }).timeout(4_000);
+
+  test("process isolation - verify PID-based killing", async () => {
+    context.reset();
+    context.createDprintJson();
+    await context.configureWorkspace();
+    await context.waitInitialize();
+
+    const extension = vscode.extensions.getExtension("dprint.dprint");
+    const pidBeforeKill = extension?.exports?.getEditorServicePid?.();
+
+    assert.ok(
+      pidBeforeKill,
+      "Should have a dprint process running after initialization",
+    );
+    assert.strictEqual(typeof pidBeforeKill, "number", "PID should be a number");
+
+    let processExists = true;
+    try {
+      process.kill(pidBeforeKill, 0);
+    } catch {
+      processExists = false;
+    }
+    assert.ok(processExists, "Process should exist before kill");
+
+    context.killAllDprintProcesses();
+    await context.sleep(100);
+
+    let processGone = false;
+    try {
+      process.kill(pidBeforeKill, 0);
+    } catch {
+      processGone = true;
+    }
+    assert.ok(
+      processGone,
+      "Process should be terminated after killAllDprintProcesses()",
+    );
+
+    context.createFile("test.json", `{"test": 5}`);
+    const doc = await context.openAndShowDocument("test.json");
+    await context.formatCommand(doc.uri);
+    assert.equal(
+      doc.getText(),
+      `{\n  "test": 5\n}\n`,
+      "Extension should restart dprint and format successfully",
+    );
+
+    const pidAfterRestart = extension?.exports?.getEditorServicePid?.();
+    assert.ok(pidAfterRestart, "Should have a new dprint process after restart");
+    assert.notStrictEqual(
+      pidAfterRestart,
+      pidBeforeKill,
+      "New process should have different PID",
+    );
+  });
 
   async function applyTextChanges(doc: vscode.TextDocument, edits: vscode.TextEdit[]) {
     const edit = new vscode.WorkspaceEdit();

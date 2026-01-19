@@ -66,6 +66,10 @@ export function activateLsp(
       resourceStores.dispose();
       client = undefined;
     },
+    getEditorServicePid() {
+      // LSP mode does not use EditorService, so no PID is available
+      return undefined;
+    },
   };
 
   async function workspaceHasConfigFile() {

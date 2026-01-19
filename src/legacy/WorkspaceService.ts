@@ -138,6 +138,17 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     }
     return allEditorInfos;
   }
+
+  getEditorServicePid(): number | undefined {
+    // Return PID from first folder that has an editor service running
+    for (const folder of this.#folders) {
+      const pid = folder.getEditorServicePid();
+      if (pid != null) {
+        return pid;
+      }
+    }
+    return undefined;
+  }
 }
 
 function areDirectoryUrisEqual(a: vscode.Uri, b: vscode.Uri) {

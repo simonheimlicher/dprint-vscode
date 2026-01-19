@@ -116,6 +116,10 @@ export class EditorService5 implements EditorService {
     }).catch(() => {/* ignore */});
   }
 
+  getEditorServicePid(): number | undefined {
+    return this._process.getPid();
+  }
+
   canFormat(filePath: string) {
     const message = this.getMessageForKind(MessageKind.CanFormat);
     message.addPart(textEncoder.encode(filePath));

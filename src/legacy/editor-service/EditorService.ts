@@ -4,4 +4,5 @@ export interface EditorService {
   killAndDispose(): void;
   canFormat(filePath: string): Promise<boolean>;
   formatText(filePath: string, fileText: string, token: vscode.CancellationToken): Promise<string | undefined>;
+  getEditorServicePid(): number | undefined;
 }

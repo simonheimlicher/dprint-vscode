@@ -32,6 +32,10 @@ export class EditorService4 implements EditorService {
     }).catch(() => {/* ignore */});
   }
 
+  getEditorServicePid(): number | undefined {
+    return this._process.getPid();
+  }
+
   canFormat(filePath: string) {
     this._process.startProcessIfNotRunning();
     return this._serialExecutor.execute(async () => {

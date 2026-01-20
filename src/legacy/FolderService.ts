@@ -52,6 +52,10 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     return this.#editorInfo;
   }
 
+  getEditorServicePid(): number | undefined {
+    return this.#editorService?.getEditorServicePid();
+  }
+
   async initialize() {
     this.#assertNotDisposed();
     const config = this.#getConfig();

@@ -43,6 +43,9 @@ export function activateLegacy(
       resourceStores.dispose();
       logger.logDebug("Disposed legacy backend.");
     },
+    getEditorServicePid() {
+      return workspaceService.getEditorServicePid();
+    },
   };
 
   function trySetFormattingSubscriptionFromFolderInfos(allFolderInfos: FolderInfos) {

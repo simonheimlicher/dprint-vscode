@@ -23,6 +23,10 @@ export class EditorProcess {
     return this._process != null;
   }
 
+  getPid(): number | undefined {
+    return this._process?.pid;
+  }
+
   onExit(handler: () => void) {
     this._onExitHandlers.push(handler);
   }

@@ -4,7 +4,12 @@ import * as path from "node:path";
 import * as process from "node:process";
 import * as vscode from "vscode";
 
-suite("Extension Test Suite", () => {
+// Use function() instead of arrow to access Mocha's `this` for timeout configuration
+suite("Extension Test Suite", function() {
+  // Use longer timeouts in CI where plugin downloads and cold starts are slower
+  const isCI = process.env.CI != null;
+  this.timeout(isCI ? 30_000 : 5_000);
+
   vscode.window.showInformationMessage("Start all tests.");
   let tempNumber = 0;
 
@@ -69,7 +74,8 @@ suite("Extension Test Suite", () => {
     },
     waitInitialize() {
       // Wait for extension to discover config, download plugins, and start dprint
-      return this.sleep(500);
+      // Longer wait in CI where cold starts and downloads are slower
+      return this.sleep(isCI ? 2000 : 500);
     },
     async sleep(ms: number) {
       await new Promise(resolve => setTimeout(resolve, ms));
@@ -178,7 +184,7 @@ suite("Extension Test Suite", () => {
 
     // should be formatted
     assert.equal(doc.getText(), `{\n  "test": 5\n}\n`);
-  }).timeout(4_000);
+  });
 
   test("process isolation - verify PID-based killing", async () => {
     context.reset();

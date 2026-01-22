@@ -1,17 +1,28 @@
 import * as assert from "node:assert";
-import * as cp from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import * as process from "node:process";
 import * as vscode from "vscode";
-// import * as myExtension from '../../extension';
 
-suite("Extension Test Suite", () => {
+// Use function() instead of arrow to access Mocha's `this` for timeout configuration
+suite("Extension Test Suite", function() {
+  // Use longer timeouts in CI where plugin downloads and cold starts are slower
+  const isCI = process.env.CI != null;
+  this.timeout(isCI ? 30_000 : 5_000);
+
   vscode.window.showInformationMessage("Start all tests.");
-  // create a temp folder
   let tempNumber = 0;
-  let tempFolder = path.join(process.cwd(), "temp");
+
+  // Tests require a workspace folder to be open (via runTest.ts or launch.json)
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) {
+    throw new Error("Tests require a workspace folder to be open");
+  }
+
+  // Create test files in a subdirectory within the opened workspace
+  // Don't use the workspace root directly to avoid deletion issues
+  let tempFolder = path.join(workspaceRoot, "test");
+  fs.mkdirSync(tempFolder, { recursive: true });
 
   const context = {
     get tempFolderUri() {
@@ -20,18 +31,21 @@ suite("Extension Test Suite", () => {
     createFile(name: string, text: string) {
       fs.writeFileSync(path.join(tempFolder, name), text, "utf8");
     },
+    createWorkspaceFile(name: string, text: string) {
+      fs.writeFileSync(path.join(workspaceRoot, name), text, "utf8");
+    },
     reset() {
       fs.rmSync(tempFolder, { recursive: true, force: true });
       fs.mkdirSync(tempFolder, { recursive: true });
     },
     async withTempFolder(action: () => Promise<void>) {
-      tempFolder = path.join(process.cwd(), `temp${++tempNumber}`);
+      tempFolder = path.join(workspaceRoot, `temp${++tempNumber}`);
       fs.rmSync(tempFolder, { recursive: true, force: true });
       fs.mkdirSync(tempFolder, { recursive: true });
       await action();
     },
     createDprintJson() {
-      this.createFile(
+      this.createWorkspaceFile(
         "dprint.json",
         `{
         "includes": [
@@ -43,10 +57,14 @@ suite("Extension Test Suite", () => {
       }`,
       );
     },
-    async openWorkspace() {
-      await vscode.commands.executeCommand("vscode.openFolder", this.tempFolderUri);
+    async configureWorkspace() {
+      // Workspace is already open via launchArgs (runTest.ts) or launch.json
       await vscode.workspace.getConfiguration("files").update("eol", "\n");
       await vscode.workspace.getConfiguration("editor").update("defaultFormatter", "dprint.dprint");
+      // Disable local history to prevent race conditions during test cleanup.
+      // VSCode's local history asynchronously copies files when they're saved,
+      // which can fail with ENOENT if test cleanup deletes the file first.
+      await vscode.workspace.getConfiguration("workbench").update("localHistory.enabled", false);
     },
     async configureFormatOnSave() {
       await vscode.workspace.getConfiguration("editor").update("formatOnSave", true);
@@ -55,8 +73,9 @@ suite("Extension Test Suite", () => {
       return vscode.Uri.joinPath(this.tempFolderUri, name);
     },
     waitInitialize() {
-      // would be nice to do something better
-      return this.sleep(250);
+      // Wait for extension to discover config, download plugins, and start dprint
+      // Longer wait in CI where cold starts and downloads are slower
+      return this.sleep(isCI ? 2000 : 500);
     },
     async sleep(ms: number) {
       await new Promise(resolve => setTimeout(resolve, ms));
@@ -73,18 +92,19 @@ suite("Extension Test Suite", () => {
       );
     },
     killAllDprintProcesses() {
-      return new Promise<void>((resolve, reject) => {
-        const command = os.platform() === "win32"
-          ? "taskkill /im dprint.exe /f"
-          : "pkill dprint";
-        cp.exec(command, (err) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
-        });
-      });
+      // Use extension API to get the PID of dprint process spawned by this test
+      const extension = vscode.extensions.getExtension<{ getEditorServicePid: () => number | undefined }>(
+        "dprint.dprint",
+      );
+      const pid = extension?.exports.getEditorServicePid();
+
+      if (pid != null) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // Process already dead or no permissions - that's fine
+        }
+      }
     },
   };
 
@@ -92,7 +112,7 @@ suite("Extension Test Suite", () => {
     context.reset();
     context.createDprintJson();
     context.createFile("test.json", "");
-    await context.openWorkspace();
+    await context.configureWorkspace();
     await context.configureFormatOnSave();
     await context.waitInitialize();
 
@@ -119,7 +139,7 @@ suite("Extension Test Suite", () => {
           "test":               5
     }`,
     );
-    await context.openWorkspace();
+    await context.configureWorkspace();
     await context.waitInitialize();
 
     // open the test.json and format it with the format command
@@ -134,7 +154,7 @@ suite("Extension Test Suite", () => {
     context.reset();
     context.createDprintJson();
     context.createFile("test.json", "");
-    await context.openWorkspace();
+    await context.configureWorkspace();
     await context.waitInitialize();
 
     // create a json file and open it
@@ -147,7 +167,8 @@ suite("Extension Test Suite", () => {
     }]);
     await context.formatCommand(doc.uri);
 
-    await context.killAllDprintProcesses();
+    context.killAllDprintProcesses();
+    await context.sleep(100);
 
     // now try editing and saving again
     await applyTextChanges(doc, [
@@ -163,7 +184,55 @@ suite("Extension Test Suite", () => {
 
     // should be formatted
     assert.equal(doc.getText(), `{\n  "test": 5\n}\n`);
-  }).timeout(4_000);
+  });
+
+  test("process isolation - verify PID-based killing", async () => {
+    context.reset();
+    context.createDprintJson();
+    await context.configureWorkspace();
+    await context.waitInitialize();
+
+    const extension = vscode.extensions.getExtension<{ getEditorServicePid: () => number | undefined }>(
+      "dprint.dprint",
+    );
+    const pidBeforeKill = extension?.exports.getEditorServicePid();
+
+    assert.ok(
+      pidBeforeKill,
+      "Should have a dprint process running after initialization",
+    );
+    assert.strictEqual(typeof pidBeforeKill, "number", "PID should be a number");
+
+    assert.doesNotThrow(
+      () => process.kill(pidBeforeKill, 0),
+      "Process should exist before kill",
+    );
+
+    context.killAllDprintProcesses();
+    await context.sleep(100);
+
+    assert.throws(
+      () => process.kill(pidBeforeKill, 0),
+      "Process should be terminated after killAllDprintProcesses()",
+    );
+
+    context.createFile("test.json", `{"test": 5}`);
+    const doc = await context.openAndShowDocument("test.json");
+    await context.formatCommand(doc.uri);
+    assert.equal(
+      doc.getText(),
+      `{\n  "test": 5\n}\n`,
+      "Extension should restart dprint and format successfully",
+    );
+
+    const pidAfterRestart = extension?.exports.getEditorServicePid();
+    assert.ok(pidAfterRestart, "Should have a new dprint process after restart");
+    assert.notStrictEqual(
+      pidAfterRestart,
+      pidBeforeKill,
+      "New process should have different PID",
+    );
+  });
 
   async function applyTextChanges(doc: vscode.TextDocument, edits: vscode.TextEdit[]) {
     const edit = new vscode.WorkspaceEdit();

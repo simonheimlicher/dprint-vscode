@@ -31,9 +31,16 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   }
 
   get uri() {
+    // Check if config is inside the workspace folder
     if (this.#configUri != null) {
-      return vscode.Uri.joinPath(this.#configUri, "../");
+      const configPath = this.#configUri.fsPath;
+      const workspacePath = this.#workspaceFolder.uri.fsPath;
+      if (configPath.startsWith(workspacePath)) {
+        // Config is inside workspace, use its parent directory
+        return vscode.Uri.joinPath(this.#configUri, "../");
+      }
     }
+    // Use workspace folder for user-level configs or when no config specified
     return this.#workspaceFolder.uri;
   }
 

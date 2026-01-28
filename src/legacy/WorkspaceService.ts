@@ -82,6 +82,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
     for (const folder of vscode.workspace.workspaceFolders) {
       const stringFolderUri = folder.uri.toString();
       const subConfigUris = configFiles.filter(c => c.toString().startsWith(stringFolderUri));
+
+      // Add folder services for workspace-relative configs
       for (const subConfigUri of subConfigUris) {
         this.#folders.push(
           new FolderService({
@@ -92,11 +94,22 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
         );
       }
 
-      // if the current workspace folder hasn't been added, then ensure
-      // it's added to the list of folders in order to allow someone
-      // formatting when the current open workspace is in a sub directory
-      // of a workspace
-      if (
+      // Check for user-level configs (configs outside the workspace path)
+      const userLevelConfigs = configFiles.filter(c => !c.toString().startsWith(stringFolderUri));
+      if (userLevelConfigs.length > 0 && !this.#folders.some(f => areDirectoryUrisEqual(f.uri, folder.uri))) {
+        // Use the first user-level config for this workspace
+        this.#folders.push(
+          new FolderService({
+            workspaceFolder: folder,
+            configUri: userLevelConfigs[0],
+            logger: this.#logger,
+          }),
+        );
+      } else if (
+        // if the current workspace folder hasn't been added, then ensure
+        // it's added to the list of folders in order to allow someone
+        // formatting when the current open workspace is in a sub directory
+        // of a workspace
         !this.#folders.some(f => areDirectoryUrisEqual(f.uri, folder.uri))
         && ancestorDirsContainConfigFile(folder.uri)
       ) {

@@ -371,9 +371,7 @@ suite("Extension Test Suite", function() {
       }
     });
 
-    // TODO: This test reveals a bug - the checkUserLevelConfig setting isn't preventing
-    // user-level config from being used. Investigate and fix.
-    test.skip("checkUserLevelConfig setting disables user-level lookup", async () => {
+    test("checkUserLevelConfig setting disables user-level lookup", async () => {
       const { dprintConfigDir, cleanup } = setupTempConfigDir();
 
       try {
@@ -389,8 +387,12 @@ suite("Extension Test Suite", function() {
           }),
         );
 
-        // Disable user-level config lookup
-        await vscode.workspace.getConfiguration("dprint").update("checkUserLevelConfig", false);
+        // Disable user-level config lookup - use Workspace target since we're in a workspace context
+        await vscode.workspace
+          .getConfiguration("dprint")
+          .update("checkUserLevelConfig", false, vscode.ConfigurationTarget.Workspace);
+        // Small delay to ensure config is persisted
+        await context.sleep(100);
 
         // Restart extension
         await vscode.commands.executeCommand("dprint.restart");
@@ -407,8 +409,10 @@ suite("Extension Test Suite", function() {
 
         assert.equal(doc.getText(), originalText, "Should NOT format when checkUserLevelConfig is false");
       } finally {
-        // Reset setting
-        await vscode.workspace.getConfiguration("dprint").update("checkUserLevelConfig", undefined);
+        // Reset setting at Workspace level
+        await vscode.workspace
+          .getConfiguration("dprint")
+          .update("checkUserLevelConfig", undefined, vscode.ConfigurationTarget.Workspace);
         cleanup();
         await vscode.commands.executeCommand("dprint.restart");
       }

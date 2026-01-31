@@ -510,6 +510,80 @@ suite("Extension Test Suite", function() {
       }
     });
 
+    test("file outside workspace is formatted with user-level config", async () => {
+      const { dprintConfigDir, cleanup } = setupTempConfigDir();
+
+      try {
+        // Remove workspace config
+        removeWorkspaceConfig();
+
+        // Create user-level config in the dprint/ subdirectory
+        // Add explicit json settings to verify this config is being used
+        fs.writeFileSync(
+          path.join(dprintConfigDir, "dprint.json"),
+          JSON.stringify({
+            includes: ["**/*.json"],
+            plugins: ["https://plugins.dprint.dev/json-0.19.4.wasm"],
+            json: {
+              "array.preferSingleLine": true,
+              "object.preferSingleLine": true,
+            },
+          }),
+        );
+
+        // Restart extension to pick up user-level config
+        await vscode.commands.executeCommand("dprint.restart");
+        await waitAfterRestart();
+        // Extra wait for stability
+        await context.sleep(1000);
+
+        // Create a test file OUTSIDE the workspace but in same directory as config
+        // This should definitely match **/*.json relative to config location
+        const outsideFilePath = path.join(dprintConfigDir, "outside_test.json");
+        fs.writeFileSync(outsideFilePath, "{\"outside\":    5}");
+
+        // Open and format the file outside the workspace
+        const outsideUri = vscode.Uri.file(outsideFilePath);
+        const doc = await vscode.workspace.openTextDocument(outsideUri);
+        await vscode.window.showTextDocument(doc, vscode.ViewColumn.One, false);
+
+        // Wait then explicitly request formatting
+        await context.sleep(500);
+        const edits = await vscode.commands.executeCommand<vscode.TextEdit[]>(
+          "vscode.executeFormatDocumentProvider",
+          doc.uri,
+          { tabSize: 2, insertSpaces: true },
+        );
+
+        // Apply edits if any
+        if (edits && edits.length > 0) {
+          const edit = new vscode.WorkspaceEdit();
+          edit.set(doc.uri, edits);
+          await vscode.workspace.applyEdit(edit);
+        }
+
+        // The file should be formatted. Check that it changed from original.
+        const formattedText = doc.getText();
+        assert.notEqual(
+          formattedText,
+          "{\"outside\":    5}",
+          "File should have been formatted",
+        );
+
+        // Check expected format - should match user-level config with preferSingleLine: true
+        // If this fails with multi-line output, the globalFolder is using wrong config
+        assert.equal(
+          formattedText,
+          "{ \"outside\": 5 }\n",
+          `Expected single-line format from user-level config. Got: ${JSON.stringify(formattedText)}. `
+            + "If multi-line, the globalFolder may be using stopper config instead of user-level config.",
+        );
+      } finally {
+        cleanup();
+        await vscode.commands.executeCommand("dprint.restart");
+      }
+    });
+
     test("per-folder configPath setting is respected in multi-root simulation", async () => {
       const { tempConfigDir, cleanup } = setupTempConfigDir();
 

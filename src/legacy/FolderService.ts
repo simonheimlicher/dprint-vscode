@@ -10,6 +10,9 @@ export interface FolderServiceOptions {
   workspaceFolder: vscode.WorkspaceFolder;
   configUri: vscode.Uri | undefined;
   logger: Logger;
+  /** If true, use config's parent dir as cwd instead of workspace folder.
+   * This is needed for the globalFolder to format files outside workspaces. */
+  useConfigDirAsCwd?: boolean;
 }
 
 /** Represents an instance of dprint for a single workspace folder */
@@ -18,6 +21,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #environment: Environment;
   readonly #workspaceFolder: vscode.WorkspaceFolder;
   readonly #configUri: vscode.Uri | undefined;
+  readonly #useConfigDirAsCwd: boolean;
   #disposed = false;
 
   #editorService: EditorService | undefined;
@@ -27,6 +31,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     this.#logger = opts.logger;
     this.#workspaceFolder = opts.workspaceFolder;
     this.#configUri = opts.configUri;
+    this.#useConfigDirAsCwd = opts.useConfigDirAsCwd ?? false;
     this.#environment = new RealEnvironment(this.#logger);
   }
 
@@ -154,10 +159,21 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   #getDprintExecutable() {
     const config = this.#getConfig();
+
+    // Determine cwd based on useConfigDirAsCwd flag.
+    //
+    // Why this matters: dprint resolves `includes` patterns relative to cwd.
+    // - For workspace folders: use workspace folder as cwd (avoids resource locks on subdirs)
+    // - For globalFolder (files outside workspaces): use config's parent dir so patterns
+    //   like `**/*.json` match files near the config, not in the workspace
+    let cwd = this.#workspaceFolder.uri;
+    if (this.#useConfigDirAsCwd && this.#configUri != null) {
+      cwd = vscode.Uri.joinPath(this.#configUri, "../");
+    }
+
     return DprintExecutable.create({
       cmdPath: config.path,
-      // Use workspace folder as cwd to avoid holding resource locks on subdirs
-      cwd: this.#workspaceFolder.uri,
+      cwd,
       configUri: this.#configUri,
       verbose: config.verbose,
       logger: this.#logger,

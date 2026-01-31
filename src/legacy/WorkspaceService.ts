@@ -21,6 +21,8 @@ export interface WorkspaceServiceOptions {
 export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
   readonly #logger: Logger;
   readonly #folders: FolderService[] = [];
+  /** Global folder for files outside all workspace folders, using user-level config */
+  #globalFolder: FolderService | undefined;
 
   #disposed = false;
 
@@ -57,7 +59,13 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
         }
       }
     }
-    return bestMatch;
+    // Fall back to global folder for files outside all workspace folders
+    const result = bestMatch ?? this.#globalFolder;
+    this.#logger.logDebug(
+      `getFolderForUri(${uri.fsPath}): bestMatch=${bestMatch?.uri.fsPath ?? "none"}, `
+        + `globalFolder=${this.#globalFolder ? "exists" : "undefined"}, using=${result?.uri.fsPath ?? "none"}`,
+    );
+    return result;
   }
 
   #clearFolders() {
@@ -65,6 +73,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       folder.dispose();
     }
     this.#folders.length = 0; // clear
+    this.#globalFolder?.dispose();
+    this.#globalFolder = undefined;
   }
 
   async initializeFolders(): Promise<FolderInfos> {
@@ -164,8 +174,25 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
       }
     }
 
-    // now initialize in parallel
-    const initializedFolders = await Promise.all(this.#folders.map(async f => {
+    // Create a global folder for files outside all workspace folders
+    // This enables formatting standalone files (e.g., ~/Downloads/test.json) using user-level config
+    if (userLevelConfigs.length > 0) {
+      // Use the first workspace folder as the anchor, but tell FolderService to use
+      // config's parent dir as cwd so `includes` patterns match files near the config
+      this.#logger.logDebug(`Creating global folder with config: ${userLevelConfigs[0].fsPath}`);
+      this.#globalFolder = new FolderService({
+        workspaceFolder: vscode.workspace.workspaceFolders[0],
+        configUri: userLevelConfigs[0],
+        logger: this.#logger,
+        useConfigDirAsCwd: true,
+      });
+    } else {
+      this.#logger.logDebug("No user-level configs found, skipping global folder creation");
+    }
+
+    // now initialize in parallel (including global folder if it exists)
+    const foldersToInit = this.#globalFolder ? [...this.#folders, this.#globalFolder] : this.#folders;
+    const initializedFolders = await Promise.all(foldersToInit.map(async f => {
       if (await f.initialize()) {
         return f;
       } else {
@@ -195,7 +222,8 @@ export class WorkspaceService implements vscode.DocumentFormattingEditProvider {
         return pid;
       }
     }
-    return undefined;
+    // Also check global folder
+    return this.#globalFolder?.getEditorServicePid();
   }
 }
 

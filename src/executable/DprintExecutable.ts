@@ -73,9 +73,16 @@ export class DprintExecutable {
   }
 
   get initializationFolderUri() {
+    // Check if config is inside the workspace folder
     if (this.#configUri != null) {
-      return vscode.Uri.joinPath(this.#configUri, "../");
+      const configPath = this.#configUri.fsPath;
+      const cwdPath = this.#cwd.fsPath;
+      if (configPath.startsWith(cwdPath)) {
+        // Config is inside workspace, use its parent directory
+        return vscode.Uri.joinPath(this.#configUri, "../");
+      }
     }
+    // Use workspace folder for user-level configs or when no config specified
     return this.#cwd;
   }
 
@@ -121,6 +128,10 @@ export class DprintExecutable {
     if (this.#verbose) {
       args.push("--verbose");
     }
+
+    this.#logger.logDebug(
+      `Spawning editor-service: cmd=${this.#cmdPath}, args=${JSON.stringify(args)}, cwd=${this.#cwd.fsPath}`,
+    );
 
     return spawn(this.#cmdPath, args, {
       stdio: ["pipe", "pipe", "pipe"],

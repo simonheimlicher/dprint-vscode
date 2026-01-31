@@ -243,4 +243,319 @@ suite("Extension Test Suite", function() {
   function getRange(from: [number, number], to: [number, number]) {
     return new vscode.Range(new vscode.Position(from[0], from[1]), new vscode.Position(to[0], to[1]));
   }
+
+  /**
+   * Helper to create a temporary config directory for user-level dprint config.
+   * Sets platform-appropriate environment variable:
+   * - Linux/macOS: XDG_CONFIG_HOME
+   * - Windows: APPDATA
+   * (Note: process.env.HOME doesn't affect os.homedir() in Node.js)
+   * Returns a cleanup function that must be called in finally block.
+   */
+  function setupTempConfigDir(): { tempConfigDir: string; dprintConfigDir: string; cleanup: () => void } {
+    const tempConfigDir = path.join(
+      process.env.TMPDIR || process.env.TEMP || "/tmp",
+      `dprint-test-config-${Date.now()}`,
+    );
+    const dprintConfigDir = path.join(tempConfigDir, "dprint");
+    fs.mkdirSync(dprintConfigDir, { recursive: true });
+
+    const isWindows = process.platform === "win32";
+    const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+    const originalAppData = process.env.APPDATA;
+
+    // Set platform-appropriate env var for getUserConfigDirectory()
+    if (isWindows) {
+      process.env.APPDATA = tempConfigDir;
+    } else {
+      process.env.XDG_CONFIG_HOME = tempConfigDir;
+    }
+
+    return {
+      tempConfigDir,
+      dprintConfigDir,
+      cleanup: () => {
+        if (isWindows) {
+          process.env.APPDATA = originalAppData;
+        } else {
+          process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+        }
+        try {
+          fs.rmSync(tempConfigDir, { recursive: true, force: true });
+        } catch {
+          // Ignore cleanup errors
+        }
+      },
+    };
+  }
+
+  /**
+   * Helper to remove workspace dprint.json if it exists
+   */
+  function removeWorkspaceConfig() {
+    const configPath = path.join(workspaceRoot!, "dprint.json");
+    try {
+      fs.unlinkSync(configPath);
+    } catch {
+      // File doesn't exist, that's fine
+    }
+  }
+
+  // User-Level Config Integration Tests
+  suite("User-Level Config", function() {
+    // These tests require longer timeouts for extension restart and plugin downloads
+    this.timeout(isCI ? 90_000 : 60_000);
+
+    // Wait longer after restart since extension needs to reinitialize and potentially download plugins
+    const waitAfterRestart = () => context.sleep(isCI ? 5000 : 3000);
+
+    test("user-level config discovered when no workspace config", async () => {
+      const { dprintConfigDir, cleanup } = setupTempConfigDir();
+
+      try {
+        // Remove any existing workspace config
+        removeWorkspaceConfig();
+
+        // Create user-level config
+        fs.writeFileSync(
+          path.join(dprintConfigDir, "dprint.json"),
+          JSON.stringify({
+            includes: ["**/*.json"],
+            plugins: ["https://plugins.dprint.dev/json-0.19.4.wasm"],
+          }),
+        );
+
+        // Restart extension to pick up new XDG_CONFIG_HOME
+        await vscode.commands.executeCommand("dprint.restart");
+        await waitAfterRestart();
+
+        // Create and format a test file (use unique name to avoid VSCode doc caching)
+        context.reset();
+        context.createFile("user_config_test.json", "{\"user_config\":    5}");
+        const doc = await context.openAndShowDocument("user_config_test.json");
+        await context.formatCommand(doc.uri);
+
+        // dprint JSON plugin formats small objects on a single line
+        assert.equal(doc.getText(), "{ \"user_config\": 5 }\n", "Should format using user-level config");
+      } finally {
+        cleanup();
+        // Restart to restore normal state
+        await vscode.commands.executeCommand("dprint.restart");
+      }
+    });
+
+    test("workspace config takes priority over user-level", async () => {
+      const { dprintConfigDir, cleanup } = setupTempConfigDir();
+
+      try {
+        // Create user-level config with different plugin version to differentiate
+        fs.writeFileSync(
+          path.join(dprintConfigDir, "dprint.json"),
+          JSON.stringify({
+            includes: ["**/*.json"],
+            plugins: ["https://plugins.dprint.dev/json-0.19.4.wasm"],
+          }),
+        );
+
+        // Create workspace config
+        context.createWorkspaceFile(
+          "dprint.json",
+          JSON.stringify({
+            includes: ["**/*.json"],
+            plugins: ["https://plugins.dprint.dev/json-0.19.4.wasm"],
+          }),
+        );
+
+        // Restart extension
+        await vscode.commands.executeCommand("dprint.restart");
+        await waitAfterRestart();
+
+        // Format a test file - should work with workspace config
+        context.reset();
+        context.createFile("workspace_priority_test.json", "{\"workspace_priority\":    5}");
+        const doc = await context.openAndShowDocument("workspace_priority_test.json");
+        await context.formatCommand(doc.uri);
+
+        // dprint JSON plugin formats small objects on a single line
+        assert.equal(doc.getText(), "{ \"workspace_priority\": 5 }\n", "Should format using workspace config");
+      } finally {
+        cleanup();
+        removeWorkspaceConfig();
+        await vscode.commands.executeCommand("dprint.restart");
+      }
+    });
+
+    test("checkUserLevelConfig setting disables user-level lookup", async () => {
+      // Set XDG_CONFIG_HOME to empty temp dir (no config there)
+      // This isolates us from the developer's real ~/.config/dprint/
+      const { cleanup } = setupTempConfigDir();
+
+      try {
+        // Remove workspace config
+        removeWorkspaceConfig();
+
+        // NOTE: We intentionally do NOT create a user-level config here.
+        // The stopper config (in test wrapper parent) has empty includes.
+        // With checkUserLevelConfig: false, the extension won't look in XDG_CONFIG_HOME,
+        // and dprint CLI will find the stopper config which formats nothing.
+
+        // Disable user-level config lookup
+        await vscode.workspace.getConfiguration("dprint").update("checkUserLevelConfig", false);
+
+        // Restart extension
+        await vscode.commands.executeCommand("dprint.restart");
+        await waitAfterRestart();
+
+        // Create a test file (use unique name)
+        context.reset();
+        context.createFile("disabled_test.json", "{\"disabled\":    5}");
+        const doc = await context.openAndShowDocument("disabled_test.json");
+        const originalText = doc.getText();
+
+        // Try to format - should NOT change since stopper config has empty includes
+        await context.formatCommand(doc.uri);
+
+        assert.equal(doc.getText(), originalText, "Should NOT format when checkUserLevelConfig is false");
+      } finally {
+        await vscode.workspace.getConfiguration("dprint").update("checkUserLevelConfig", undefined);
+        cleanup();
+        await vscode.commands.executeCommand("dprint.restart");
+      }
+    });
+
+    test("custom configPath takes priority over workspace and user-level", async () => {
+      const { tempConfigDir, cleanup } = setupTempConfigDir();
+
+      try {
+        // Create custom config in a separate location
+        const customConfigDir = path.join(tempConfigDir, "custom-configs");
+        fs.mkdirSync(customConfigDir, { recursive: true });
+        const customConfigPath = path.join(customConfigDir, "my-dprint.json");
+        fs.writeFileSync(
+          customConfigPath,
+          JSON.stringify({
+            includes: ["**/*.json"],
+            plugins: ["https://plugins.dprint.dev/json-0.19.4.wasm"],
+          }),
+        );
+
+        // Also create workspace config (should be ignored)
+        context.createWorkspaceFile(
+          "dprint.json",
+          JSON.stringify({
+            includes: ["**/*.json"],
+            plugins: ["https://plugins.dprint.dev/json-0.19.4.wasm"],
+          }),
+        );
+
+        // Set custom config path
+        await vscode.workspace.getConfiguration("dprint").update("configPath", customConfigPath);
+
+        // Restart extension
+        await vscode.commands.executeCommand("dprint.restart");
+        await waitAfterRestart();
+
+        // Format a test file (use unique name)
+        context.reset();
+        context.createFile("custom_path_test.json", "{\"custom_path\":    5}");
+        const doc = await context.openAndShowDocument("custom_path_test.json");
+        await context.formatCommand(doc.uri);
+
+        // dprint JSON plugin formats small objects on a single line
+        assert.equal(doc.getText(), "{ \"custom_path\": 5 }\n", "Should format using custom config path");
+      } finally {
+        await vscode.workspace.getConfiguration("dprint").update("configPath", undefined);
+        cleanup();
+        removeWorkspaceConfig();
+        await vscode.commands.executeCommand("dprint.restart");
+      }
+    });
+
+    test("JSONC config file with comments is supported", async () => {
+      const { dprintConfigDir, cleanup } = setupTempConfigDir();
+
+      try {
+        // Remove workspace config
+        removeWorkspaceConfig();
+
+        // Create user-level config as JSONC with comments
+        fs.writeFileSync(
+          path.join(dprintConfigDir, "dprint.jsonc"),
+          `{
+  // This is a single-line comment
+  "includes": ["**/*.json"],
+  /* Multi-line
+     comment */
+  "plugins": [
+    "https://plugins.dprint.dev/json-0.19.4.wasm"
+  ]
+}`,
+        );
+
+        // Restart extension
+        await vscode.commands.executeCommand("dprint.restart");
+        await waitAfterRestart();
+
+        // Format a test file (use unique name)
+        context.reset();
+        context.createFile("jsonc_config_test.json", "{\"jsonc_config\":    5}");
+        const doc = await context.openAndShowDocument("jsonc_config_test.json");
+        await context.formatCommand(doc.uri);
+
+        // dprint JSON plugin formats small objects on a single line
+        assert.equal(doc.getText(), "{ \"jsonc_config\": 5 }\n", "Should format using JSONC config with comments");
+      } finally {
+        cleanup();
+        await vscode.commands.executeCommand("dprint.restart");
+      }
+    });
+
+    test("per-folder configPath setting is respected in multi-root simulation", async () => {
+      const { tempConfigDir, cleanup } = setupTempConfigDir();
+
+      try {
+        // Create a custom config in a separate location
+        const customConfigDir = path.join(tempConfigDir, "custom-configs");
+        fs.mkdirSync(customConfigDir, { recursive: true });
+        const customConfigPath = path.join(customConfigDir, "custom-dprint.json");
+        fs.writeFileSync(
+          customConfigPath,
+          JSON.stringify({
+            includes: ["**/*.json"],
+            plugins: ["https://plugins.dprint.dev/json-0.19.4.wasm"],
+          }),
+        );
+
+        // Also create a workspace config (to verify configPath takes priority)
+        context.createWorkspaceFile(
+          "dprint.json",
+          JSON.stringify({
+            includes: ["**/*.json"],
+            plugins: ["https://plugins.dprint.dev/json-0.19.4.wasm"],
+          }),
+        );
+
+        // Set configPath for this workspace folder
+        await vscode.workspace.getConfiguration("dprint").update("configPath", customConfigPath);
+
+        // Restart extension
+        await vscode.commands.executeCommand("dprint.restart");
+        await waitAfterRestart();
+
+        // Format a test file
+        context.reset();
+        context.createFile("per_folder_test.json", "{\"per_folder\":    5}");
+        const doc = await context.openAndShowDocument("per_folder_test.json");
+        await context.formatCommand(doc.uri);
+
+        // Should format using the custom configPath, not the workspace config
+        assert.equal(doc.getText(), "{ \"per_folder\": 5 }\n", "Should format using per-folder configPath");
+      } finally {
+        await vscode.workspace.getConfiguration("dprint").update("configPath", undefined);
+        cleanup();
+        removeWorkspaceConfig();
+        await vscode.commands.executeCommand("dprint.restart");
+      }
+    });
+  });
 });

@@ -12,6 +12,9 @@ export interface FolderServiceOptions {
   workspaceFolder: vscode.WorkspaceFolder;
   configUri: vscode.Uri | undefined;
   logger: Logger;
+  /** If true, use config's parent dir as cwd instead of workspace folder.
+   * This is needed for the globalFolder to format files outside workspaces. */
+  useConfigDirAsCwd?: boolean;
 }
 
 /** Represents an instance of dprint for a single workspace folder */
@@ -21,6 +24,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   readonly #environment: Environment;
   readonly #workspaceFolder: vscode.WorkspaceFolder;
   readonly #configUri: vscode.Uri | undefined;
+  readonly #useConfigDirAsCwd: boolean;
   #disposed = false;
 
   #editorService: EditorService | undefined;
@@ -31,13 +35,21 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     this.#logger = opts.logger;
     this.#workspaceFolder = opts.workspaceFolder;
     this.#configUri = opts.configUri;
+    this.#useConfigDirAsCwd = opts.useConfigDirAsCwd ?? false;
     this.#environment = new RealEnvironment(this.#logger);
   }
 
   get uri() {
+    // Check if config is inside the workspace folder
     if (this.#configUri != null) {
-      return vscode.Uri.joinPath(this.#configUri, "../");
+      const configPath = this.#configUri.fsPath;
+      const workspacePath = this.#workspaceFolder.uri.fsPath;
+      if (configPath.startsWith(workspacePath)) {
+        // Config is inside workspace, use its parent directory
+        return vscode.Uri.joinPath(this.#configUri, "../");
+      }
     }
+    // Use workspace folder for user-level configs or when no config specified
     return this.#workspaceFolder.uri;
   }
 
@@ -152,15 +164,22 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
 
   #getDprintExecutable() {
     const config = this.#getConfig();
+
+    // Determine cwd based on useConfigDirAsCwd flag.
+    //
+    // Why this matters: dprint resolves `includes` patterns relative to cwd.
+    // - For workspace folders: use workspace folder as cwd (avoids resource locks on subdirs)
+    // - For globalFolder (files outside workspaces): use config's parent dir so patterns
+    //   like `**/*.json` match files near the config, not in the workspace
+    let cwd = this.#workspaceFolder.uri;
+    if (this.#useConfigDirAsCwd && this.#configUri != null) {
+      cwd = vscode.Uri.joinPath(this.#configUri, "../");
+    }
+
     return DprintExecutable.create({
       approvedPaths: this.#approvedPaths,
       pathInfo: config.pathInfo,
-      // It's important that we always use the workspace folder as the
-      // cwd for the process instead of possibly the sub directory because
-      // we don't want the dprint process to hold a resource lock on a
-      // sub directory. That would give the user a bad experience where
-      // they can't delete the sub directory.
-      cwd: this.#workspaceFolder.uri,
+      cwd,
       configUri: this.#configUri,
       verbose: config.verbose,
       logger: this.#logger,

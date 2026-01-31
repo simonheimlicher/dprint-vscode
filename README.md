@@ -43,6 +43,15 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
   // but use this when you want to specify a custom location.
   // Include the executable name (ex. on windows "C:\\some-dir\\dprint.exe")
   "dprint.path": "/home/david/otherPath/dprint",
+  // Specify a custom path to a dprint configuration file.
+  // Supports `~/` for home directory expansion.
+  // If not set, the extension will search for config files in workspace folders,
+  // ancestor directories, and optionally user-level config directories.
+  "dprint.configPath": "~/.config/dprint/dprint.json",
+  // Whether to check for dprint config files in user-level directories
+  // (~/.config/dprint/ on Linux/macOS, %APPDATA%\dprint\ on Windows)
+  // when no workspace config is found. Defaults to true.
+  "dprint.checkUserLevelConfig": true,
   // Change this to `true` to get verbose logging
   "dprint.verbose": false,
   // Change this to `true` to enable the experimental lsp (requires dprint 0.45+)
@@ -50,9 +59,21 @@ Follow the instructions here: [Install](https://dprint.dev/install/)
 }
 ```
 
+### Config File Discovery
+
+The extension searches for dprint configuration files in the following order:
+
+1. **Custom config path** (highest priority): If `dprint.configPath` is set, only this file will be used
+2. **Workspace configs**: Config files in workspace folders and their ancestor directories
+3. **User-level configs** (fallback): If no workspace config is found and `dprint.checkUserLevelConfig` is enabled:
+   - Linux/macOS: `~/.config/dprint/` (or `$XDG_CONFIG_HOME/dprint/`)
+   - Windows: `%APPDATA%\dprint\`
+
+Supported config file names: `dprint.json`, `dprint.jsonc`, `.dprint.json`, `.dprint.jsonc`
+
 ## Known Issues
 
-- No support for custom config locations.
+None currently reported.
 
 ## Developing and Testing Locally
 

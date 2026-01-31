@@ -31,9 +31,16 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
   }
 
   get uri() {
+    // Check if config is inside the workspace folder
     if (this.#configUri != null) {
-      return vscode.Uri.joinPath(this.#configUri, "../");
+      const configPath = this.#configUri.fsPath;
+      const workspacePath = this.#workspaceFolder.uri.fsPath;
+      if (configPath.startsWith(workspacePath)) {
+        // Config is inside workspace, use its parent directory
+        return vscode.Uri.joinPath(this.#configUri, "../");
+      }
     }
+    // Use workspace folder for user-level configs or when no config specified
     return this.#workspaceFolder.uri;
   }
 
@@ -149,11 +156,7 @@ export class FolderService implements vscode.DocumentFormattingEditProvider {
     const config = this.#getConfig();
     return DprintExecutable.create({
       cmdPath: config.path,
-      // It's important that we always use the workspace folder as the
-      // cwd for the process instead of possibly the sub directory because
-      // we don't want the dprint process to hold a resource lock on a
-      // sub directory. That would give the user a bad experience where
-      // they can't delete the sub directory.
+      // Use workspace folder as cwd to avoid holding resource locks on subdirs
       cwd: this.#workspaceFolder.uri,
       configUri: this.#configUri,
       verbose: config.verbose,

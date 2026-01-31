@@ -1,19 +1,44 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as vscode from "vscode";
+import { getCombinedDprintConfig } from "./config";
 import { DPRINT_CONFIG_FILE_NAMES, DPRINT_CONFIG_FILEPATH_GLOB } from "./constants";
 import { Logger } from "./logger";
-import { delay, waitWorkspaceInitialized } from "./utils";
+import { delay, getUserConfigDirectory, waitWorkspaceInitialized } from "./utils";
 
 export async function discoverWorkspaceConfigFiles(opts: { maxResults?: number; logger: Logger }) {
   const logger = opts.logger;
+
+  // Note: configPath is now handled per-folder in WorkspaceService.initializeFolders()
+  // This function discovers configs in workspaces and user-level directories
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const config = getCombinedDprintConfig(folders);
+
+  logger.logDebug(`Config discovery: ${folders.length} workspace folder(s)`);
+
   // See https://github.com/dprint/dprint-vscode/issues/105 -- for some reason findFiles would
   // return no results on very large projects when called too early on startup
   await waitWorkspaceInitialized();
   // just in case, mitigate more by waiting a little bit of time
   await delay(250);
+
   // now try to find the files
-  return await attemptFindFiles();
+  const workspaceConfigs = await attemptFindFiles();
+
+  if (workspaceConfigs.length > 0) {
+    logger.logDebug(`Found ${workspaceConfigs.length} workspace config(s)`);
+  }
+
+  // If no workspace configs found and user-level config check is enabled, check user directories
+  if (workspaceConfigs.length === 0 && config.checkUserLevelConfig) {
+    logger.logDebug("No workspace config found, checking user-level config directories...");
+    const userLevelConfig = await findUserLevelConfig(logger);
+    if (userLevelConfig) {
+      return [userLevelConfig];
+    }
+  }
+
+  return workspaceConfigs;
 
   async function attemptFindFiles() {
     const foundFiles = await vscodeFindFiles();
@@ -87,6 +112,26 @@ export async function discoverWorkspaceConfigFiles(opts: { maxResults?: number; 
   }
 }
 
+/**
+ * Validates a configPath setting and returns the URI if valid.
+ * Returns undefined if the path doesn't exist or isn't a file.
+ */
+export async function resolveConfigPath(configPath: string, logger: Logger): Promise<vscode.Uri | undefined> {
+  const configUri = vscode.Uri.file(configPath);
+  try {
+    const stat = await vscode.workspace.fs.stat(configUri);
+    if (stat.type === vscode.FileType.File) {
+      logger.logDebug(`Using custom config path: ${configPath}`);
+      return configUri;
+    } else {
+      logger.logWarn(`Custom config path is not a file: ${configPath}`);
+    }
+  } catch {
+    logger.logWarn(`Custom config path does not exist: ${configPath}`);
+  }
+  return undefined;
+}
+
 export function ancestorDirsContainConfigFile(dirUri: vscode.Uri): boolean {
   for (const ancestorDirectoryPath of enumerateAncestorDirectories(dirUri.fsPath)) {
     if (directoryContainsConfigurationFile(ancestorDirectoryPath)) {
@@ -120,4 +165,34 @@ export function ancestorDirsContainConfigFile(dirUri: vscode.Uri): boolean {
     }
     return false;
   }
+}
+
+/**
+ * Searches for dprint config files in user-level config directories.
+ * Checks platform-specific locations in order:
+ * - Linux/macOS: ~/.config/ then ~/.config/dprint/
+ * - Windows: %APPDATA%\ then %APPDATA%\dprint\
+ */
+async function findUserLevelConfig(logger: Logger): Promise<vscode.Uri | undefined> {
+  const userConfigDir = getUserConfigDirectory();
+  const parentConfigDir = dirname(userConfigDir);
+  const searchDirs = [parentConfigDir, userConfigDir];
+
+  logger.logDebug(`Checking user-level config directories: ${searchDirs.join(", ")}`);
+
+  for (const dir of searchDirs) {
+    for (const configFileName of DPRINT_CONFIG_FILE_NAMES) {
+      const configFilePath = join(dir, configFileName);
+      try {
+        if (existsSync(configFilePath)) {
+          logger.logDebug(`Found user-level config: ${configFilePath}`);
+          return vscode.Uri.file(configFilePath);
+        }
+      } catch (err) {
+        logger.logDebug(`Error checking ${configFilePath}: ${err}`);
+      }
+    }
+  }
+
+  return undefined;
 }

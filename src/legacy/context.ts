@@ -3,6 +3,7 @@ import type { ExtensionBackend } from "../ExtensionBackend";
 import type { Logger } from "../logger";
 import { ActivatedDisposables, HttpsTextDownloader, ObjectDisposedError } from "../utils";
 import { ConfigJsonSchemaProvider } from "./ConfigJsonSchemaProvider";
+import { getLanguageIdsForPlugin, isKnownPlugin } from "./pluginRegistry";
 import { type FolderInfos, WorkspaceService } from "./WorkspaceService";
 
 export function activateLegacy(
@@ -22,13 +23,20 @@ export function activateLegacy(
     vscode.workspace.registerTextDocumentContentProvider(ConfigJsonSchemaProvider.scheme, configSchemaProvider),
   );
 
+  // Track formatter registration separately so we can dispose it on reinitialization
+  let formatterDisposable: vscode.Disposable | undefined;
+
   return {
     isLsp: false,
     async reInitialize() {
       try {
         const folderInfos = await workspaceService.initializeFolders();
         configSchemaProvider.setFolderInfos(folderInfos);
-        trySetFormattingSubscriptionFromFolderInfos(folderInfos);
+
+        // Dispose previous formatter registration before creating a new one
+        formatterDisposable?.dispose();
+        formatterDisposable = trySetFormattingSubscriptionFromFolderInfos(folderInfos);
+
         if (folderInfos.length === 0) {
           logger.logInfo("Configuration file not found.");
         }
@@ -40,6 +48,7 @@ export function activateLegacy(
       logger.logDebug("Initialized legacy backend.");
     },
     dispose() {
+      formatterDisposable?.dispose();
       resourceStores.dispose();
       logger.logDebug("Disposed legacy backend.");
     },
@@ -48,39 +57,62 @@ export function activateLegacy(
     },
   };
 
-  function trySetFormattingSubscriptionFromFolderInfos(allFolderInfos: FolderInfos) {
-    const formattingPatterns = getFormattingPatterns();
+  function trySetFormattingSubscriptionFromFolderInfos(allFolderInfos: FolderInfos): vscode.Disposable | undefined {
+    const languageIds = collectLanguageIds(allFolderInfos);
 
-    if (formattingPatterns.length === 0) {
-      return;
+    if (languageIds.size === 0) {
+      logger.logInfo("No known plugins found. Formatter not registered.");
+      return undefined;
     }
 
-    resourceStores.push(
-      vscode.languages.registerDocumentFormattingEditProvider(
-        formattingPatterns.map(pattern => ({ scheme: "file", pattern })),
-        {
-          provideDocumentFormattingEdits(document, options, token) {
-            return workspaceService.provideDocumentFormattingEdits(document, options, token);
-          },
+    // Convert Set to array and create language-based DocumentSelector
+    const documentSelector: vscode.DocumentSelector = Array.from(languageIds).map(languageId => ({
+      scheme: "file",
+      language: languageId,
+    }));
+
+    logger.logInfo(`Registering formatter for languages: ${Array.from(languageIds).join(", ")}`);
+
+    return vscode.languages.registerDocumentFormattingEditProvider(
+      documentSelector,
+      {
+        provideDocumentFormattingEdits(document, options, token) {
+          return workspaceService.provideDocumentFormattingEdits(document, options, token);
         },
-      ),
+      },
     );
 
-    function getFormattingPatterns() {
-      const patterns: vscode.RelativePattern[] = [];
-      for (const folderInfo of allFolderInfos) {
-        if (folderInfo.editorInfo.plugins.length > 0) {
-          // Match against all files and let the dprint CLI say if it can format a file or not.
-          // This is necessary because by using the "associations" feature, a user may pattern
-          // match against any file path then format that file using a certain plugin. Additionally,
-          // we can't use the "includes" and "excludes" patterns from the config file because we
-          // want to ensure consistent path matching behaviour... so don't want to rely on vscode's
-          // pattern matching being the same.
-          const pattern = new vscode.RelativePattern(folderInfo.uri, `**/*`);
-          patterns.push(pattern);
+    function collectLanguageIds(folderInfos: FolderInfos): Set<string> {
+      const languageIds = new Set<string>();
+      const unknownPlugins = new Set<string>();
+
+      for (const folderInfo of folderInfos) {
+        for (const plugin of folderInfo.editorInfo.plugins) {
+          // Use configKey as the primary lookup, fall back to name
+          const pluginKey = plugin.configKey || plugin.name;
+
+          if (isKnownPlugin(pluginKey)) {
+            const pluginLanguageIds = getLanguageIdsForPlugin(pluginKey);
+            if (pluginLanguageIds) {
+              pluginLanguageIds.forEach(id => languageIds.add(id));
+            }
+          } else {
+            unknownPlugins.add(pluginKey);
+          }
         }
       }
-      return patterns;
+
+      // Log unknown plugins for debugging
+      if (unknownPlugins.size > 0) {
+        logger.logInfo(
+          `Unknown/custom plugins detected (will not be registered): ${Array.from(unknownPlugins).join(", ")}`,
+        );
+        logger.logInfo(
+          "If this is an official dprint plugin, please report this at https://github.com/dprint/dprint-vscode/issues",
+        );
+      }
+
+      return languageIds;
     }
   }
 }

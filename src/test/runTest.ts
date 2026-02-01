@@ -27,9 +27,23 @@ async function main() {
     // Passed to --extensionTestsPath
     const extensionTestsPath = path.resolve(__dirname, "./suite/index");
 
-    // Create a temporary workspace folder for tests
-    const testWorkspace = path.join(os.tmpdir(), "dprint-vscode-test-workspace");
-    fs.rmSync(testWorkspace, { recursive: true, force: true });
+    // Create a unique wrapper directory that contains:
+    // 1. A "stopper" dprint.json with empty includes (prevents dprint from finding user configs)
+    // 2. The actual test workspace as a subdirectory
+    const testWrapper = fs.mkdtempSync(path.join(os.tmpdir(), "dprint-vscode-test-"));
+
+    // Create stopper config - dprint finds this and stops searching
+    // Empty includes means it won't format anything (files don't match)
+    // But we need a plugin so dprint can initialize without hanging
+    fs.writeFileSync(
+      path.join(testWrapper, "dprint.json"),
+      JSON.stringify({
+        includes: [],
+        plugins: ["https://plugins.dprint.dev/json-0.19.4.wasm"],
+      }),
+    );
+
+    const testWorkspace = path.join(testWrapper, "workspace");
     fs.mkdirSync(testWorkspace, { recursive: true });
 
     // Download VS Code, unzip it and run the integration test

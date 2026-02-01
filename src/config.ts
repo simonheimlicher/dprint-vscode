@@ -10,6 +10,8 @@ export interface DprintExtensionConfig {
   pathInfo: DprintExtensionConfigPathInfo | undefined;
   verbose: boolean;
   experimentalLsp: boolean;
+  configPath: string | undefined;
+  checkUserLevelConfig: boolean;
 }
 
 export function getCombinedDprintConfig(folders: readonly vscode.WorkspaceFolder[]) {
@@ -17,6 +19,8 @@ export function getCombinedDprintConfig(folders: readonly vscode.WorkspaceFolder
     pathInfo: undefined,
     verbose: false,
     experimentalLsp: false,
+    configPath: undefined,
+    checkUserLevelConfig: true,
   };
 
   for (const folder of folders) {
@@ -30,6 +34,12 @@ export function getCombinedDprintConfig(folders: readonly vscode.WorkspaceFolder
     if (config.pathInfo != null && combinedConfig.pathInfo == null) {
       combinedConfig.pathInfo = config.pathInfo;
     }
+    if (config.configPath != null && combinedConfig.configPath == null) {
+      combinedConfig.configPath = config.configPath;
+    }
+    if (!config.checkUserLevelConfig) {
+      combinedConfig.checkUserLevelConfig = false;
+    }
   }
 
   return combinedConfig;
@@ -42,6 +52,8 @@ export function getDprintConfig(scope: vscode.Uri): DprintExtensionConfig {
     pathInfo,
     verbose: getBool("verbose"),
     experimentalLsp: getBool("experimentalLsp"),
+    configPath: getPath("configPath"),
+    checkUserLevelConfig: getBoolWithDefault("checkUserLevelConfig", true),
   };
 
   function getPathInfo(): DprintExtensionConfigPathInfo | undefined {
@@ -63,8 +75,21 @@ export function getDprintConfig(scope: vscode.Uri): DprintExtensionConfig {
     }
   }
 
+  function getPath(name: string) {
+    const path = config.get(name);
+    if (typeof path === "string" && path.trim().length > 0) {
+      return shellExpand(path.trim());
+    }
+    return undefined;
+  }
+
   function getBool(name: string) {
-    const verbose = config.get(name);
-    return verbose === true;
+    const value = config.get(name);
+    return value === true;
+  }
+
+  function getBoolWithDefault(name: string, defaultValue: boolean) {
+    const value = config.get(name);
+    return value === null || value === undefined ? defaultValue : value === true;
   }
 }

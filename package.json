@@ -62,6 +62,29 @@
           "default": false,
           "markdownDescription": "Whether to enable verbose logging.",
           "scope": "resource"
+        },
+        "dprint.configPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "markdownDescription": "Specify a custom path to a dprint configuration file. Supports `~/` for home directory. If not set, the extension will search for config files in workspace folders, ancestor directories, and optionally user-level config directories.",
+          "scope": "resource",
+          "examples": [
+            "~/.config/dprint/dprint.json",
+            "/path/to/dprint.json",
+            "C:\\Users\\username\\dprint.json"
+          ]
+        },
+        "dprint.checkUserLevelConfig": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": true,
+          "markdownDescription": "Whether to check for dprint config files in user-level directories (`~/.config/dprint/` on Linux/macOS, `%APPDATA%\\dprint\\` on Windows) when no workspace config is found.",
+          "scope": "resource"
         }
       }
     },
